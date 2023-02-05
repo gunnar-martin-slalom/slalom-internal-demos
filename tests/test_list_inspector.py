@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 # Make sure python is looking in the correct spot for the source code
-src_path = os.path.join(Path(__file__).parents[1], "list_inspector")
+src_path = os.path.join(Path(__file__).parents[1], "src")
 sys.path.append(src_path)
 
 # Import my source code
