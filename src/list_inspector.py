@@ -8,7 +8,8 @@ def remove_string_elements(src_list):
     for element in src_list:
 
         # Ignore this element if it is a string
-        if isinstance(element, float):
+        if isinstance(element, str):
+            print(f"Removing element: {element}")
             continue
 
         # Add each element to the new list
