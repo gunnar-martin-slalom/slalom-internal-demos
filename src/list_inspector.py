@@ -9,6 +9,7 @@ def remove_string_elements(src_list):
 
         # Ignore this element if it is a string
         if isinstance(element, str):
+            print(f"Removing element: {element}")
             continue
 
         # Add each element to the new list
