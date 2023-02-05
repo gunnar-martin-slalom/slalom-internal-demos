@@ -1,36 +1,17 @@
+"""
+Trivial demo functions for altering simple Python lists.
+"""
 
-import os
-import sys
-from pathlib import Path
+def remove_string_elements(src_list):
 
-# Make sure python is looking in the correct spot for the source code
-src_path = os.path.join(Path(__file__).parents[1], "src")
-sys.path.append(src_path)
+    new_list = []
+    for element in src_list:
 
-# Import my source code
-from list_inspector import remove_string_elements
+        # Ignore this element if it is a string
+        if isinstance(element, str):
+            continue
 
+        # Add each element to the new list
+        new_list.append(element)
 
-def test_remove_string_elements_1():
-
-
-    my_list = [123, 456, "abc", 789,]
-
-    new_list = remove_string_elements(my_list)
-
-    expected_list = [123, 456, 789]
-
-    assert new_list == expected_list
-
-def test_remove_string_elements_2():
-
-
-    my_list = ["123", "456", "abc", "789",]
-
-    new_list = remove_string_elements(my_list)
-
-    expected_list = []
-
-    assert new_list == expected_list
-
-
+    return new_list
