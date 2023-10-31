@@ -224,6 +224,8 @@ class DataLoader:
 
 def lambda_handler(event, context):
 
+    print(f"Lambda invoked with event: {event}")
+
     loader = DataLoader(
         batch_size=500,
         run_date=event.get("run_date"),
