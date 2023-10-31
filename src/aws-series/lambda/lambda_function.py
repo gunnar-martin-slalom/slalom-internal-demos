@@ -1,18 +1,10 @@
 """
-
-URL:
-https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2010-to-Present/erm2-nwe9
-
-API:
-https://data.cityofnewyork.us/resource/erm2-nwe9.json
-
-https://data.cityofnewyork.us/resource/erm2-nwe9.json?$where=closed_date between '2023-10-21T00:00:00.000' and '2023-10-21T23:59:59.999'
-
-https://dev.socrata.com/docs/functions/#,
-https://dev.socrata.com/docs/paging.html
-
+Loads a single `closed_date` to s3 as CSV files.
 """
+import boto3
 import csv
+import datetime
+import io
 import json
 import urllib3
 
@@ -21,19 +13,18 @@ class BatchLoader:
 
     def __init__(
             self,
-            base_path,
             run_date,
             offset_value,
-            batch_size,
+            limit_value,
     ):
 
-        self._base_path = base_path
         self._run_date = run_date
         self._offset_value = offset_value
-        self._batch_size = batch_size
+        self._limit_value = limit_value
         self._url_path = None
         self._record_list = None
         self._http_pool_manager = None
+        self._s3_object_key = None
 
     def _get_http_pool_manager(self):
 
@@ -45,25 +36,67 @@ class BatchLoader:
         return self._http_pool_manager
 
     @property
+    def s3_object_bucket(self):
+        return "aws-series-s3-demo-0001"
+
+    @property
+    def s3_object_key(self):
+        """
+        :return:
+            Object key for the CSV file.
+
+            Ex: ".../data-00007765.csv"
+        """
+
+        offset_fill = str(self.offset_value).zfill(8)
+
+        s3_object_key = str(
+            f"demo-folder-lambda"
+            f"/run-date"
+            f"/{self.run_date}"
+            f"/data-{offset_fill}.csv"
+        )
+
+        return s3_object_key
+
+    @property
+    def run_date(self):
+        return self._run_date
+
+    @property
+    def offset_value(self):
+        return self._offset_value
+
+    @property
+    def limit_value(self):
+        return self._limit_value
+
+    @property
     def url_path(self):
 
         self._url_path = str(
             f"https://data.cityofnewyork.us/resource/erm2-nwe9.json"
             f"?$where=closed_date between "
-            f"'2023-10-21T00:00:00.000'"
+            f"'{self.run_date}T00:00:00.000'"
             f" and "
-            f"'2023-10-21T23:59:59.999'"
-            f"&$limit={self._b}"
-            f"&$offset=7077"
+            f"'{self.run_date}T23:59:59.999'"
+            f"&$limit={self.limit_value}"
+            f"&$offset={self.offset_value}"
         )
 
         return self._url_path
 
     @property
     def record_list(self):
+        """
+        :return:
+            List of Python dictionaries containing data.
+        """
 
         if self._record_list:
             return self._record_list
+
+        print(f" Getting dat from path: {self.url_path}")
 
         # Sending a GET request and getting back response as HTTPResponse object.
         http = self._get_http_pool_manager()
@@ -85,10 +118,13 @@ class BatchLoader:
 
         return self._record_list
 
-    def _write_out_csv(self):
+    def execute(self):
 
-        csv_file_object = open("test_file.csv", "w", newline="")
-        csv_writer = csv.writer(csv_file_object)
+        # String buffer to write to
+        csv_string_buffer = io.StringIO()
+        
+        # Instantiate CSV writer object
+        csv_writer = csv.writer(csv_string_buffer)
 
         count = 0
         for data in self.record_list:
@@ -98,97 +134,107 @@ class BatchLoader:
                 count += 1
             csv_writer.writerow(data.values())
 
-        csv_file_object.close()
+        # Convert the buffer to binary for put_object() method
+        binary_data = csv_string_buffer.getvalue().encode("utf-8")
 
+        msg = str(
+            f"Writing data to: s3://{self.s3_object_bucket}"
+            f"/{self.s3_object_key}"
+        )
+        print(msg)
 
-    def execute(self):
+        # Put object to s3
+        s3_client = boto3.client("s3")
+        s3_client.put_object(
+            Body=binary_data,
+            Bucket=self.s3_object_bucket,
+            Key=self.s3_object_key,
+        )
 
-        self._write_out_csv()
-
-        print(len(self.record_list))
+        # Close the buffer
+        csv_string_buffer.close()
 
 
 class DataLoader:
 
     def __init__(
             self,
-            batch_size=10,
+            batch_size,
+            run_date=None,
     ):
 
-        self._base_path = None
         self._batch_size = batch_size
+        self._run_date = run_date
 
     @property
-    def base_path(self):
+    def run_date(self):
         """
-
-        Info on this dataset:
-            - https://dev.socrata.com/foundry/data.cityofnewyork.us/erm2-nwe9
+        If `run_date` is not given in the instantiation of DataLoader,
+          this will default to the date 7 days prior to today
 
         :return:
+            String like "YYYY-MM-DD" denoting the date
         """
 
-        self._base_path = str(
-            "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
-            "?$where=closed_date between "
-            "'2023-10-21T00:00:00.000'"
-            " and "
-            "'2023-10-21T23:59:59.999'"
-            "&$limit=100"
-            "&$offset=7077"
-        )
+        if self._run_date:
+            return self._run_date
 
-        return self._base_path
+        days_prior_ct = 7
+        now_dt = datetime.datetime.now()
+        past_dt = now_dt + datetime.timedelta(days=-days_prior_ct)
+        self._run_date = past_dt.strftime("%Y-%m-%d")
 
+        return self._run_date
 
+    @property
+    def batch_size(self):
+        return self._batch_size
 
     def execute(self):
+        """
+        Executions instances of BatchLoader() until every page has been
+          output to s3.
 
-        url_path = self.base_path
+        :return: None
+        """
 
-        offset = 0
-        batch_size = 0
+        curr_offset_value = 0
 
         while True:
 
+            print(f"curr_offset_value: {curr_offset_value}")
+
             loader = BatchLoader(
-                url_path=url_path
+                run_date=self.run_date,
+                offset_value=curr_offset_value,
+                limit_value=self.batch_size,
             )
+
+            print(f"Record count: {len(loader.record_list)}")
+
             if len(loader.record_list) == 0:
                 break
 
             loader.execute()
 
-            print("Done.")
+            # Increment offset
+            curr_offset_value += self.batch_size
 
-def mock_function():
-
-
-    # Creating a PoolManager instance for sending requests.
-    http = urllib3.PoolManager()
-
-    url_path = "https://data.cityofnewyork.us/resource/erm2-nwe9.json?unique_key=59171877"
-    url_path = "https://data.cityofnewyork.us/resource/erm2-nwe9.json?$where=closed_date between '2023-10-21T00:00:00.000' and '2023-10-21T23:59:59.999'&$limit=5"
-
-    # Sending a GET request and getting back response as HTTPResponse object.
-    resp = http.request("GET", url_path)
-
-    # Print the returned data.
-    print(resp.status)
-    print(resp.data)
+        print("Done.")
 
 def lambda_handler(event, context):
 
-    loader = DataLoader()
-
+    loader = DataLoader(
+        batch_size=500,
+        run_date=event.get("run_date"),
+    )
     loader.execute()
-
 
     return {
         "statusCode": 200,
         "body": json.dumps("Finished with success.")
     }
 
-
+# For running script locally
 if __name__ == "__main__":
-    lambda_handler(None, None)
+    lambda_handler({}, None)
